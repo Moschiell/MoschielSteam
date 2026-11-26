@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeuStream</title>
+<style>
+  :root { --bg:#0b0d12; --card:#151924; --accent:#00d4ff; --text:#e8ecf4; --muted:#8a93a6; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; padding:16px; }
+  h1 { font-size:22px; margin-bottom:16px; color:var(--accent); }
+  h2 { font-size:16px; margin:20px 0 10px; color:var(--muted); }
+  .row { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; }
+  .card { flex:0 0 140px; background:var(--card); border-radius:12px; padding:12px; }
+  .logo { height:70px; border-radius:8px; background:#222a3a; margin-bottom:8px;
+          display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; }
+  .name { font-size:14px; }
+  .q { font-size:11px; color:var(--accent); margin-top:4px; }
+  #status { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<h1>MeuStream</h1>
+<p id="status">Carregando catálogo…</p>
+<main id="app"></main>
+<script>
+const CATALOG_URL = "catalog.json";
+
+async function loadCatalog() {
+  const r = await fetch(CATALOG_URL + "?t=" + Date.now());
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function render(cat) {
+  const app = document.getElementById("app");
+  app.innerHTML = "";
+  cat.categories.forEach(c => {
+    const list = cat.channels.filter(ch => ch.category === c.id);
+    if (!list.length) return;
+    const h = document.createElement("h2");
+    h.textContent = c.name;
+    const row = document.createElement("div");
+    row.className = "row";
+    list.forEach(ch => {
+      const d = document.createElement("div");
+      d.className = "card";
+      d.innerHTML = `<div class="logo">${ch.logo ? `<img src="${ch.logo}" style="max-height:100%;max-width:100%">` : "sem logo"}</div>
+        <div class="name"></div><div class="q"></div>`;
+      d.querySelector(".name").textContent = ch.name;
+      d.querySelector(".q").textContent = ch.streams[0].quality + " · " + ch.streams[0].type.toUpperCase();
+      row.appendChild(d);
+    });
+    app.append(h, row);
+  });
+  document.getElementById("status").textContent =
+    `${cat.channels.length} canais · catálogo v${cat.version} (${cat.updated})`;
+}
+
+loadCatalog().then(render).catch(e => {
+  document.getElementById("status").textContent = "Erro ao carregar: " + e.message;
+});
+</script>
+</body>
+</html>
