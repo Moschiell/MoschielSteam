@@ -5,19 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeuStream</title>
 <style>
-  :root { --bg:#0b0d12; --card:#151924; --accent:#00d4ff; --text:#e8ecf4; --muted:#8a93a6; }
+  :root { --bg:#0b0d12; --card:#151924; --accent:#00d4ff; --text:#e8ecf4; --muted:#8a93a6; --star:#ffc233; }
   * { box-sizing:border-box; margin:0; }
   body { background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; padding:16px; }
-  h1 { font-size:22px; margin-bottom:16px; color:var(--accent); }
+  h1 { font-size:22px; margin-bottom:12px; color:var(--accent); }
   h2 { font-size:16px; margin:20px 0 10px; color:var(--muted); }
+  #search { width:100%; background:var(--card); color:var(--text); border:1px solid #222a3a;
+            border-radius:10px; padding:12px 14px; font-size:15px; margin-bottom:6px; }
+  #search:focus { outline:2px solid var(--accent); }
   .row { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; }
-  .card { flex:0 0 140px; background:var(--card); border-radius:12px; padding:12px; cursor:pointer; }
+  .card { position:relative; flex:0 0 140px; background:var(--card); border-radius:12px; padding:12px; cursor:pointer; }
   .card:focus-visible { outline:2px solid var(--accent); }
   .logo { height:70px; border-radius:8px; background:#222a3a; margin-bottom:8px;
           display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; }
   .name { font-size:14px; }
   .q { font-size:11px; color:var(--accent); margin-top:4px; }
-  #status { color:var(--muted); font-size:12px; }
+  .fav { position:absolute; top:6px; right:6px; width:34px; height:34px; border:0; border-radius:50%;
+         background:rgba(11,13,18,.75); color:var(--muted); font-size:18px; line-height:34px; }
+  .fav.on { color:var(--star); }
+  .fav:focus-visible { outline:2px solid var(--accent); }
+  #status, .empty { color:var(--muted); font-size:12px; }
+  .empty { margin-top:20px; font-size:14px; }
 
   /* Player */
   #player { position:fixed; inset:0; background:#000; z-index:10; display:none; flex-direction:column; }
@@ -33,6 +41,7 @@
 </head>
 <body>
 <h1>MeuStream</h1>
+<input id="search" type="search" placeholder="Pesquisar canais" autocomplete="off">
 <p id="status">Carregando catálogo…</p>
 <main id="app"></main>
 
@@ -50,14 +59,34 @@ const CATALOG_URL = "catalog.json";
 const video = document.getElementById("video");
 const box = document.getElementById("player");
 const msg = document.getElementById("msg");
+const searchEl = document.getElementById("search");
 let player = null;
+let catalog = null;
 
+/* ---------- Favoritos (salvos no aparelho) ---------- */
+function getFavs() {
+  try { return JSON.parse(localStorage.getItem("favs") || "[]"); }
+  catch (e) { return []; }
+}
+function saveFavs(list) {
+  try { localStorage.setItem("favs", JSON.stringify(list)); } catch (e) {}
+}
+function toggleFav(id) {
+  const favs = getFavs();
+  const i = favs.indexOf(id);
+  if (i >= 0) favs.splice(i, 1); else favs.push(id);
+  saveFavs(favs);
+  render();
+}
+
+/* ---------- Catálogo ---------- */
 async function loadCatalog() {
   const r = await fetch(CATALOG_URL + "?t=" + Date.now());
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
 
+/* ---------- Player ---------- */
 function setMsg(text, isError) {
   msg.textContent = text;
   msg.className = isError ? "err" : "";
@@ -95,35 +124,75 @@ async function closePlayer() {
 document.getElementById("close").addEventListener("click", closePlayer);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closePlayer(); });
 
-function render(cat) {
-  const app = document.getElementById("app");
-  app.innerHTML = "";
-  cat.categories.forEach(c => {
-    const list = cat.channels.filter(ch => ch.category === c.id);
-    if (!list.length) return;
-    const h = document.createElement("h2");
-    h.textContent = c.name;
-    const row = document.createElement("div");
-    row.className = "row";
-    list.forEach(ch => {
-      const d = document.createElement("div");
-      d.className = "card";
-      d.tabIndex = 0;
-      d.innerHTML = `<div class="logo">${ch.logo ? `<img src="${ch.logo}" style="max-height:100%;max-width:100%">` : "sem logo"}</div>
-        <div class="name"></div><div class="q"></div>`;
-      d.querySelector(".name").textContent = ch.name;
-      d.querySelector(".q").textContent = ch.streams[0].quality + " · " + ch.streams[0].type.toUpperCase();
-      d.addEventListener("click", () => openPlayer(ch));
-      d.addEventListener("keydown", e => { if (e.key === "Enter") openPlayer(ch); });
-      row.appendChild(d);
-    });
-    app.append(h, row);
-  });
-  document.getElementById("status").textContent =
-    `${cat.channels.length} canais · catálogo v${cat.version} (${cat.updated})`;
+/* ---------- Interface ---------- */
+function norm(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-loadCatalog().then(render).catch(e => {
+function makeCard(ch, favs) {
+  const d = document.createElement("div");
+  d.className = "card";
+  d.tabIndex = 0;
+  d.innerHTML = `<div class="logo">${ch.logo ? `<img src="${ch.logo}" style="max-height:100%;max-width:100%">` : "sem logo"}</div>
+    <div class="name"></div><div class="q"></div>`;
+  d.querySelector(".name").textContent = ch.name;
+  d.querySelector(".q").textContent = ch.streams[0].quality + " · " + ch.streams[0].type.toUpperCase();
+
+  const star = document.createElement("button");
+  const isFav = favs.includes(ch.id);
+  star.className = "fav" + (isFav ? " on" : "");
+  star.textContent = isFav ? "★" : "☆";
+  star.setAttribute("aria-label", isFav ? "Remover dos favoritos" : "Adicionar aos favoritos");
+  star.addEventListener("click", e => { e.stopPropagation(); toggleFav(ch.id); });
+  d.appendChild(star);
+
+  d.addEventListener("click", () => openPlayer(ch));
+  d.addEventListener("keydown", e => { if (e.key === "Enter" && e.target === d) openPlayer(ch); });
+  return d;
+}
+
+function addSection(app, title, list, favs) {
+  const h = document.createElement("h2");
+  h.textContent = title;
+  const row = document.createElement("div");
+  row.className = "row";
+  list.forEach(ch => row.appendChild(makeCard(ch, favs)));
+  app.append(h, row);
+}
+
+function render() {
+  if (!catalog) return;
+  const app = document.getElementById("app");
+  const favs = getFavs();
+  const q = norm(searchEl.value.trim());
+  app.innerHTML = "";
+
+  const match = ch => !q || norm(ch.name).includes(q);
+  let shown = 0;
+
+  const favList = catalog.channels.filter(ch => favs.includes(ch.id) && match(ch));
+  if (favList.length) { addSection(app, "Favoritos", favList, favs); shown += favList.length; }
+
+  catalog.categories.forEach(c => {
+    const list = catalog.channels.filter(ch => ch.category === c.id && match(ch));
+    if (!list.length) return;
+    addSection(app, c.name, list, favs);
+    shown += list.length;
+  });
+
+  if (!shown) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "Nenhum canal encontrado para “" + searchEl.value.trim() + "”.";
+    app.appendChild(p);
+  }
+  document.getElementById("status").textContent =
+    `${catalog.channels.length} canais · catálogo v${catalog.version} (${catalog.updated})`;
+}
+
+searchEl.addEventListener("input", render);
+
+loadCatalog().then(cat => { catalog = cat; render(); }).catch(e => {
   document.getElementById("status").textContent = "Erro ao carregar: " + e.message;
 });
 </script>
