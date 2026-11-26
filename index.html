@@ -11,26 +11,89 @@
   h1 { font-size:22px; margin-bottom:16px; color:var(--accent); }
   h2 { font-size:16px; margin:20px 0 10px; color:var(--muted); }
   .row { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; }
-  .card { flex:0 0 140px; background:var(--card); border-radius:12px; padding:12px; }
+  .card { flex:0 0 140px; background:var(--card); border-radius:12px; padding:12px; cursor:pointer; }
+  .card:focus-visible { outline:2px solid var(--accent); }
   .logo { height:70px; border-radius:8px; background:#222a3a; margin-bottom:8px;
           display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; }
   .name { font-size:14px; }
   .q { font-size:11px; color:var(--accent); margin-top:4px; }
   #status { color:var(--muted); font-size:12px; }
+
+  /* Player */
+  #player { position:fixed; inset:0; background:#000; z-index:10; display:none; flex-direction:column; }
+  #player.open { display:flex; }
+  #bar { display:flex; align-items:center; gap:12px; padding:10px 14px; background:#0b0d12; }
+  #title { flex:1; font-size:15px; }
+  #close { background:var(--card); color:var(--text); border:0; border-radius:8px; padding:8px 14px; font-size:14px; }
+  #video { flex:1; width:100%; min-height:0; background:#000; }
+  #msg { padding:8px 14px; font-size:13px; color:var(--muted); background:#0b0d12; min-height:34px; }
+  #msg.err { color:#ff6b6b; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/shaka-player@4.7.11/dist/shaka-player.compiled.js"></script>
 </head>
 <body>
 <h1>MeuStream</h1>
 <p id="status">Carregando catálogo…</p>
 <main id="app"></main>
+
+<div id="player">
+  <div id="bar">
+    <span id="title"></span>
+    <button id="close">Fechar</button>
+  </div>
+  <video id="video" controls autoplay playsinline></video>
+  <div id="msg"></div>
+</div>
+
 <script>
 const CATALOG_URL = "catalog.json";
+const video = document.getElementById("video");
+const box = document.getElementById("player");
+const msg = document.getElementById("msg");
+let player = null;
 
 async function loadCatalog() {
   const r = await fetch(CATALOG_URL + "?t=" + Date.now());
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
+
+function setMsg(text, isError) {
+  msg.textContent = text;
+  msg.className = isError ? "err" : "";
+}
+
+async function openPlayer(ch) {
+  document.getElementById("title").textContent = ch.name;
+  box.classList.add("open");
+  setMsg("Carregando transmissão…");
+
+  if (!window.shaka || !shaka.Player.isBrowserSupported()) {
+    setMsg("Este navegador não suporta o player.", true);
+    return;
+  }
+  try {
+    if (!player) {
+      shaka.polyfill.installAll();
+      player = new shaka.Player();
+      await player.attach(video);
+      player.addEventListener("error", e => setMsg("Erro no player (código " + e.detail.code + ")", true));
+    }
+    await player.load(ch.streams[0].url);
+    setMsg("Reproduzindo · " + ch.streams[0].quality + " · " + ch.streams[0].type.toUpperCase());
+    video.play().catch(() => {});
+  } catch (e) {
+    setMsg("Não foi possível abrir este canal (código " + (e.code || "?") + ")", true);
+  }
+}
+
+async function closePlayer() {
+  video.pause();
+  box.classList.remove("open");
+  if (player) { try { await player.unload(); } catch (e) {} }
+}
+document.getElementById("close").addEventListener("click", closePlayer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closePlayer(); });
 
 function render(cat) {
   const app = document.getElementById("app");
@@ -45,10 +108,13 @@ function render(cat) {
     list.forEach(ch => {
       const d = document.createElement("div");
       d.className = "card";
+      d.tabIndex = 0;
       d.innerHTML = `<div class="logo">${ch.logo ? `<img src="${ch.logo}" style="max-height:100%;max-width:100%">` : "sem logo"}</div>
         <div class="name"></div><div class="q"></div>`;
       d.querySelector(".name").textContent = ch.name;
       d.querySelector(".q").textContent = ch.streams[0].quality + " · " + ch.streams[0].type.toUpperCase();
+      d.addEventListener("click", () => openPlayer(ch));
+      d.addEventListener("keydown", e => { if (e.key === "Enter") openPlayer(ch); });
       row.appendChild(d);
     });
     app.append(h, row);
